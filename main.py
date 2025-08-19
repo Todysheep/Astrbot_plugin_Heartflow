@@ -64,12 +64,19 @@ class HeartflowPlugin(star.Star):
 
         # 判断权重配置
         self.weights = {
-            "relevance": 0.25,
-            "willingness": 0.2,
-            "social": 0.2,
-            "timing": 0.15,
-            "continuity": 0.2  # 新增：与上次回复的连贯性
+            "relevance": self.config.get("judge_relevance", 0.25),
+            "willingness": self.config.get("judge_willingness", 0.2),
+            "social": self.config.get("judge_social", 0.2),
+            "timing": self.config.get("judge_timing", 0.15),
+            "continuity": self.config.get("judge_continuity", 0.2)
         }
+        # 检查权重和
+        weight_sum = sum(self.weights.values())
+        if abs(weight_sum - 1.0) > 1e-6:
+            logger.warning(f"判断权重和不为1，当前和为{weight_sum}")
+            # 进行归一化处理
+            self.weights = {k: v / weight_sum for k, v in self.weights.items()}
+            logger.info(f"判断权重和已归一化，当前配置为: {self.weights}")
 
         logger.info("心流插件已初始化")
 
