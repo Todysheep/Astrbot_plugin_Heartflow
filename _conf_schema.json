@@ -46,5 +46,35 @@
     "type": "list",
     "default": [],
     "hint": "允许心流回复的群聊sid列表，/sid获取"
+  },
+  "judge_relevance": {
+    "description": "判断权重的内容相关度",
+    "type": "float",
+    "default": 0.25,
+    "hint": "针对判断权重的内容相关度设置，默认25%"
+  },
+  "judge_willingness": {
+    "description": "判断权重的回复意愿",
+    "type": "float",
+    "default": 0.2,
+    "hint": "针对判断权重的回复意愿设置，默认20%"
+  },
+  "judge_social": {
+    "description": "判断权重的社交适宜性",
+    "type": "float",
+    "default": 0.2,
+    "hint": "针对判断权重的社交适宜性设置，默认20%"
+  },
+  "judge_timing": {
+    "description": "判断权重的时机相关性",
+    "type": "float",
+    "default": 0.15,
+    "hint": "针对判断权重的时机相关性设置，默认15%"
+  },
+  "judge_continuity": {
+    "description": "判断权重的对话连贯性",
+    "type": "float",
+    "default": 0.2,
+    "hint": "针对判断权重的对话连贯性设置，默认20%"
   }
 }
