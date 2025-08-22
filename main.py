@@ -62,6 +62,10 @@ class HeartflowPlugin(star.Star):
         # 系统提示词缓存：{conversation_id: {"original": str, "summarized": str, "persona_id": str}}
         self.system_prompt_cache: Dict[str, Dict[str, str]] = {}
 
+        # 判断配置
+        self.judge_include_reasoning = self.config.get("judge_include_reasoning", True)
+        self.judge_max_retries = max(0, self.config.get("judge_max_retries", 3))  # 确保最小为0
+        
         # 判断权重配置
         self.weights = {
             "relevance": self.config.get("judge_relevance", 0.25),
@@ -170,7 +174,7 @@ class HeartflowPlugin(star.Star):
                     logger.warning("小模型返回的总结内容为空或过短")
                     return original_prompt
                     
-            except json.JSONDecodeError as e:
+            except json.JSONDecodeError:
                 logger.error(f"小模型总结系统提示词返回非有效JSON: {content}")
                 return original_prompt
                 
@@ -210,6 +214,10 @@ class HeartflowPlugin(star.Star):
         chat_context = await self._build_chat_context(event)
         recent_messages = await self._get_recent_messages(event)
         last_bot_reply = await self._get_last_bot_reply(event)  # 新增：获取上次bot回复
+
+        reasoning_part = ""
+        if self.judge_include_reasoning:
+            reasoning_part = ',\n    "reasoning": "详细分析原因，说明为什么应该或不应该回复，需要结合机器人角色特点进行分析，特别说明与上次回复的关联性"'
 
         judge_prompt = f"""
 你是群聊机器人的决策系统，需要判断是否应该主动回复以下消息。
@@ -264,11 +272,6 @@ class HeartflowPlugin(star.Star):
 
 **回复阈值**: {self.reply_threshold} (综合评分达到此分数才回复)
 
-**关联消息筛选要求**：
-- 从上面的对话历史中找出与当前消息内容相关的消息
-- 直接复制相关消息的完整内容，保持原有格式
-- 如果没有相关消息，返回空数组
-
 **重要！！！请严格按照以下JSON格式回复，不要添加任何其他内容：**
 
 请以JSON格式回复：
@@ -277,11 +280,7 @@ class HeartflowPlugin(star.Star):
     "willingness": 分数,
     "social": 分数,
     "timing": 分数,
-    "continuity": 分数,
-    "reasoning": "详细分析原因，说明为什么应该或不应该回复，需要结合机器人角色特点进行分析，特别说明与上次回复的关联性",
-    "should_reply": true/false,
-    "confidence": 0.0-1.0,
-    "related_messages": ["从上面对话历史中筛选出与当前消息可能有关联的消息，直接复制完整内容保持原格式，如果没有关联消息则为空数组"]
+    "continuity": 分数{reasoning_part}
 }}
 
 **注意：你的回复必须是完整的JSON对象，不要包含任何解释性文字或其他内容！**
@@ -298,46 +297,82 @@ class HeartflowPlugin(star.Star):
             complete_judge_prompt += "\n\n**重要提醒：你必须严格按照JSON格式返回结果，不要包含任何其他内容！请不要进行对话，只返回JSON！**\n\n"
             complete_judge_prompt += judge_prompt
 
-            llm_response = await judge_provider.text_chat(
-                prompt=complete_judge_prompt,
-                contexts=recent_contexts  # 传入最近的对话历史
-            )
+            # 重试机制：使用配置的重试次数
+            max_retries = self.judge_max_retries + 1  # 配置的次数+原始尝试=总尝试次数
+            
+            # 如果配置的重试次数为0，只尝试一次
+            if self.judge_max_retries == 0:
+                max_retries = 1
+            
+            for attempt in range(max_retries):
+                try:
+                    logger.debug(f"小参数模型判断尝试 {attempt + 1}/{max_retries}")
+                    
+                    llm_response = await judge_provider.text_chat(
+                        prompt=complete_judge_prompt,
+                        contexts=recent_contexts  # 传入最近的对话历史
+                    )
 
-            content = llm_response.completion_text.strip()
+                    content = llm_response.completion_text.strip()
+                    logger.debug(f"小参数模型原始返回内容: {content[:200]}...")
 
-            # 尝试提取JSON
-            try:
-                if content.startswith("```json"):
-                    content = content.replace("```json", "").replace("```", "").strip()
-                elif content.startswith("```"):
-                    content = content.replace("```", "").strip()
+                    # 尝试提取JSON
+                    if content.startswith("```json"):
+                        content = content.replace("```json", "").replace("```", "").strip()
+                    elif content.startswith("```"):
+                        content = content.replace("```", "").strip()
 
-                judge_data = json.loads(content)
+                    judge_data = json.loads(content)
 
-                # 计算综合评分
-                overall_score = (
-                    judge_data.get("relevance", 0) * self.weights["relevance"] +
-                    judge_data.get("willingness", 0) * self.weights["willingness"] +
-                    judge_data.get("social", 0) * self.weights["social"] +
-                    judge_data.get("timing", 0) * self.weights["timing"] +
-                    judge_data.get("continuity", 0) * self.weights["continuity"]
-                ) / 10.0
+                    # 直接从JSON根对象获取分数
+                    relevance = judge_data.get("relevance", 0)
+                    willingness = judge_data.get("willingness", 0)
+                    social = judge_data.get("social", 0)
+                    timing = judge_data.get("timing", 0)
+                    continuity = judge_data.get("continuity", 0)
+                    
+                    # 计算综合评分
+                    overall_score = (
+                        relevance * self.weights["relevance"] +
+                        willingness * self.weights["willingness"] +
+                        social * self.weights["social"] +
+                        timing * self.weights["timing"] +
+                        continuity * self.weights["continuity"]
+                    ) / 10.0
 
-                return JudgeResult(
-                    relevance=judge_data.get("relevance", 0),
-                    willingness=judge_data.get("willingness", 0),
-                    social=judge_data.get("social", 0),
-                    timing=judge_data.get("timing", 0),
-                    continuity=judge_data.get("continuity", 0),
-                    reasoning=judge_data.get("reasoning", ""),
-                    should_reply=judge_data.get("should_reply", False) and overall_score >= self.reply_threshold,
-                    confidence=judge_data.get("confidence", 0.0),
-                    overall_score=overall_score,
-                    related_messages=judge_data.get("related_messages", [])
-                )
-            except json.JSONDecodeError as e:
-                logger.error(f"小参数模型返回非有效JSON: {content}")
-                return JudgeResult(should_reply=False, reasoning=f"JSON解析失败: {str(e)}")
+                    # 根据综合评分判断是否应该回复
+                    should_reply = overall_score >= self.reply_threshold
+
+                    logger.debug(f"小参数模型判断成功，综合评分: {overall_score:.3f}, 是否回复: {should_reply}")
+
+                    return JudgeResult(
+                        relevance=relevance,
+                        willingness=willingness,
+                        social=social,
+                        timing=timing,
+                        continuity=continuity,
+                        reasoning=judge_data.get("reasoning", "") if self.judge_include_reasoning else "",
+                        should_reply=should_reply,
+                        confidence=overall_score,  # 使用综合评分作为置信度
+                        overall_score=overall_score,
+                        related_messages=[]  # 不再使用关联消息功能
+                    )
+                    
+                except json.JSONDecodeError as e:
+                    logger.warning(f"小参数模型返回JSON解析失败 (尝试 {attempt + 1}/{max_retries}): {str(e)}")
+                    logger.warning(f"无法解析的内容: {content[:500]}...")
+                    
+                    if attempt == max_retries - 1:
+                        # 最后一次尝试失败，返回失败结果
+                        logger.error(f"小参数模型重试{self.judge_max_retries}次后仍然返回无效JSON，放弃处理")
+                        return JudgeResult(should_reply=False, reasoning=f"JSON解析失败，重试{self.judge_max_retries}次")
+                    else:
+                        # 还有重试机会，添加更强的提示
+                        complete_judge_prompt = complete_judge_prompt.replace(
+                            "**重要提醒：你必须严格按照JSON格式返回结果，不要包含任何其他内容！请不要进行对话，只返回JSON！**",
+                            f"**重要提醒：你必须严格按照JSON格式返回结果，不要包含任何其他内容！请不要进行对话，只返回JSON！这是第{attempt + 2}次尝试，请确保返回有效的JSON格式！**"
+                        )
+                        continue
 
         except Exception as e:
             logger.error(f"小参数模型判断异常: {e}")
@@ -592,6 +627,7 @@ class HeartflowPlugin(star.Star):
 ⚙️ **配置参数**
 - 回复阈值: {self.reply_threshold}
 - 判断提供商: {self.judge_provider_name}
+- 最大重试次数: {self.judge_max_retries}
 - 白名单模式: {'✅ 开启' if self.whitelist_enabled else '❌ 关闭'}
 - 白名单群聊数: {len(self.chat_whitelist) if self.whitelist_enabled else 0}
 
