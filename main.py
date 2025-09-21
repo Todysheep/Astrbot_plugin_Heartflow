@@ -289,6 +289,17 @@ class HeartflowPlugin(star.Star):
         try:
             # 使用 provider 调用模型，传入最近的对话历史作为上下文
             recent_contexts = await self._get_recent_contexts(event)
+            
+            # 将上下文转换为字符串格式
+            context_string = ""
+            if recent_contexts:
+                context_lines = []
+                for msg in recent_contexts:
+                    role = msg.get("role", "")
+                    content = msg.get("content", "")
+                    if role and content:
+                        context_lines.append(f"{role}: {content}")
+                context_string = "\n".join(context_lines)
 
             # 构建完整的判断提示词，将系统提示直接整合到prompt中
             complete_judge_prompt = "你是一个专业的群聊回复决策系统，能够准确判断消息价值和回复时机。"
@@ -312,7 +323,7 @@ class HeartflowPlugin(star.Star):
                     
                     llm_response = await judge_provider.text_chat(
                         prompt=complete_judge_prompt,
-                        contexts=[str(recent_contexts)]  # 传入最近的对话历史
+                        contexts=[context_string] if context_string else []
                     )
 
                     content = llm_response.completion_text.strip()
