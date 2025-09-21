@@ -323,7 +323,7 @@ class HeartflowPlugin(star.Star):
                     
                     llm_response = await judge_provider.text_chat(
                         prompt=complete_judge_prompt,
-                        contexts=[context_string] if context_string else []
+                        contexts=[{"role": "user", "content": context_string}] if context_string else []
                     )
 
                     content = llm_response.completion_text.strip()
