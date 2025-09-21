@@ -304,6 +304,8 @@ class HeartflowPlugin(star.Star):
             if self.judge_max_retries == 0:
                 max_retries = 1
             
+            logger.info(f"小参数模型判断提示词: {str(recent_contexts)}")
+            
             for attempt in range(max_retries):
                 try:
                     logger.debug(f"小参数模型判断尝试 {attempt + 1}/{max_retries}")
