@@ -310,7 +310,7 @@ class HeartflowPlugin(star.Star):
                     
                     llm_response = await judge_provider.text_chat(
                         prompt=complete_judge_prompt,
-                        contexts=recent_contexts  # 传入最近的对话历史
+                        contexts=[str(recent_contexts)]  # 传入最近的对话历史
                     )
 
                     content = llm_response.completion_text.strip()
