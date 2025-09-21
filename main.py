@@ -304,6 +304,8 @@ class HeartflowPlugin(star.Star):
             if self.judge_max_retries == 0:
                 max_retries = 1
             
+            logger.info(f"小参数模型判断提示词: {str(recent_contexts)}")
+            
             for attempt in range(max_retries):
                 try:
                     logger.debug(f"小参数模型判断尝试 {attempt + 1}/{max_retries}")
@@ -375,7 +377,8 @@ class HeartflowPlugin(star.Star):
                         continue
 
         except Exception as e:
-            logger.error(f"小参数模型判断异常: {e}")
+            import traceback
+            logger.error(f"小参数模型判断异常: {e}\n{traceback.format_exc()}")
             return JudgeResult(should_reply=False, reasoning=f"异常: {str(e)}")
 
     @filter.event_message_type(filter.EventMessageType.GROUP_MESSAGE, priority=1000)
